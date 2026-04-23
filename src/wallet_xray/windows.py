@@ -140,6 +140,7 @@ def compute_window(
     slug_rows: list[dict],
     *,
     allow_gamma: bool = True,
+    winner_cache: dict[str, str] | None = None,
 ) -> dict | None:
     """Compute per-window metrics. Returns None if the window is unresolved or has no BUYs.
 
@@ -170,7 +171,12 @@ def compute_window(
         return None
 
     # --- winner inference ---
+    # Preferred: REDEEM rows. Next: pre-resolved cache (used by subgraph
+    # source, which harvests outcome prices during translation). Last
+    # resort: live gamma call.
     winner = infer_winner_from_redeems(buys, redeems)
+    if winner is None and winner_cache is not None:
+        winner = winner_cache.get(slug)
     if winner is None and allow_gamma:
         winner = resolve_winner_via_gamma(slug)
     if winner is None:
@@ -274,6 +280,7 @@ def build_windows(
     tfs: list[str] | None = None,
     min_window_start: int | None = None,
     allow_gamma: bool = True,
+    winner_cache: dict[str, str] | None = None,
     progress: bool = True,
 ) -> tuple[list[dict], dict]:
     """Build all resolved windows from raw activity rows.
@@ -310,7 +317,9 @@ def build_windows(
             skipped["filtered_time"] += 1
             continue
 
-        w = compute_window(slug, slug_rows, allow_gamma=allow_gamma)
+        w = compute_window(
+            slug, slug_rows, allow_gamma=allow_gamma, winner_cache=winner_cache
+        )
         if w is None:
             # differentiate: was it unresolved or had no buys?
             has_buys = any(
@@ -322,9 +331,9 @@ def build_windows(
                 skipped["unresolved"] += 1
             continue
 
-        # track gamma calls (approx): only a miss on REDEEM triggers gamma
+        # Gamma is only called when REDEEM inference fails AND no cache hit
         redeems = [r for r in slug_rows if r.get("type") == "REDEEM"]
-        if not redeems:
+        if not redeems and not (winner_cache and slug in winner_cache):
             gamma_calls += 1
 
         windows.append(w)

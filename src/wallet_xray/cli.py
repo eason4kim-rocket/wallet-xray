@@ -64,6 +64,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=100,
         help="Stratified sample size for per_window_sample (default 100)",
     )
+    p.add_argument(
+        "--source",
+        choices=["data-api", "subgraph"],
+        default="data-api",
+        help=(
+            "Activity data source. 'data-api' (default) uses Polymarket's "
+            "public /activity endpoint which is fast and includes REDEEMs "
+            "but is hard-capped at 3500 rows. 'subgraph' uses the Polygon "
+            "orderbook subgraph to bypass the cap (slower; required for "
+            "whale wallets where a single day exceeds 3500 events)."
+        ),
+    )
     p.add_argument("--no-save", action="store_true", help="Skip JSON file write")
     p.add_argument("--quiet", action="store_true", help="Suppress stderr progress")
     p.add_argument("--version", action="version", version=f"wallet-xray {__version__}")
@@ -141,14 +153,34 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── fetch ────────────────────────────────────────────────────
     if progress:
-        print("[1/3] Fetching activity ...", file=sys.stderr)
+        print(f"[1/3] Fetching activity (source={args.source}) ...", file=sys.stderr)
     # Pass min_ws so fetch can early-stop once a page goes out of range.
     # A small buffer (2h) protects against unsettled windows that may still
     # produce REDEEMs slightly after window_end.
     fetch_min_ts = (min_ws - 7200) if min_ws is not None else None
-    rows = fetch_activity(wallet, min_ts=fetch_min_ts, progress=progress)
+
+    winner_cache: dict[str, str] | None = None
+    if args.source == "subgraph":
+        from wallet_xray.subgraph import (
+            fetch_trades_subgraph,
+            translate_to_activity_rows,
+        )
+        events = fetch_trades_subgraph(wallet, min_ts=fetch_min_ts, progress=progress)
+        rows, winner_cache = translate_to_activity_rows(
+            events, wallet, progress=progress
+        )
+    else:
+        rows = fetch_activity(wallet, min_ts=fetch_min_ts, progress=progress)
+
     if progress:
         print(f"  total activity rows: {len(rows)}", file=sys.stderr)
+        # Detect data-api 3500 cap — a whale wallet signal
+        if args.source == "data-api" and len(rows) >= 3500:
+            print(
+                "  💡 data-api returned 3500 rows (hit the hard cap). This wallet "
+                "is likely a whale. For full history, re-run with --source subgraph.",
+                file=sys.stderr,
+            )
 
     if progress:
         print("[2/3] Building windows ...", file=sys.stderr)
@@ -158,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         tfs=tfs,
         min_window_start=min_ws,
         allow_gamma=not args.no_gamma,
+        winner_cache=winner_cache,
         progress=progress,
     )
     if progress:

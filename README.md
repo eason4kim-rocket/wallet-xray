@@ -88,9 +88,21 @@ wallet-xray [wallet] [options]
   --out-dir DIR         JSON 输出目录（默认 ./reports/）
   --no-gamma            跳过 Gamma 兜底（只靠 REDEEM 推断赢家，最快）
   --sample-size N       分层采样窗口数（默认 100）
+  --source SRC          数据源：data-api（默认，快）或 subgraph（绕开 3500 cap 的 whale 模式）
   --no-save             不保存 JSON，只打印 Markdown
   --quiet               关闭 stderr 进度提示
 ```
+
+### `--source subgraph` 什么时候用
+
+当对 **whale 钱包**（每天成交 >1000 笔）跑 `--days > 1` 时，data-api 会被它 3500 条的硬上限截断。表现是：
+
+```
+total activity rows: 3500
+💡 data-api returned 3500 rows (hit the hard cap). This wallet is likely a whale.
+```
+
+这时切 `--source subgraph` 走 Polygon orderbook subgraph，无事件数上限，按 timestamp 游标翻页。翻译阶段一次性从 gamma 拿到 `outcomePrices`，winner 缓存命中率 100%，不再串行调用 gamma。
 
 ## AI 解读提示词模板
 
@@ -144,7 +156,11 @@ Below is a full trading profile JSON for a Polymarket wallet on BTC/ETH/SOL/XRP 
 
 ## 已知限制
 
-**data-api activity 存在 3500 条上限**。Polymarket 的 `data-api` 在 offset=3500 时会返回 HTTP 400。工具会优雅降级停止翻页 — 但这意味着极活跃的 whale 钱包用 `--days all` 会被截到最近 ~3500 条记录。对非常活跃的钱包建议用 `--days 7` 或 `--days 3`。
+**1. data-api activity 存在 3500 条硬上限。** Polymarket 的 `data-api` 在 offset=3500 时会返回 HTTP 400。工具会优雅降级停止翻页。
+
+**2. 早停优化可以极大缓解这个问题。** 由于 data-api 返回按 timestamp 倒序排列，工具在看到"某一页最旧的行已经早于 `--days` 的截止时间"时就会 break。所以 whale 钱包 + `--days 7` 只会翻到覆盖 7 天的页数，通常不会碰到 3500 cap。
+
+**3. whale 钱包用 `--source subgraph` 绕开 cap。** 极度活跃的 whale（每天 ≥ 1000 成交）即便用 `--days 1` 也会撞 3500 cap。这时切 Polygon orderbook subgraph：事件无上限 + 按 timestamp 游标翻页。翻译阶段顺手把每个市场的 `outcomePrices` 缓存下来，winner 推断直接命中缓存，不再调 gamma。代价：慢一些（每个 market 都要 gamma 反查 slug/outcome 映射），但只需一次性。
 
 ## 开发
 
