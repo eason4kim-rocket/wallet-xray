@@ -74,7 +74,7 @@ wallet-xray 0x... > wallet.md
 - 用户 all-in $95 Up @ $0.95，Up 赢 → `directional_win=True`，`user_won=True`，但仅赚 $5（薄利）
 - 用户下 $95 Up @ $0.95 + $10 Down @ $0.20 对冲，Up 赢 → 赎回 $100，净亏 $5：**方向对但亏钱**
 
-实际测试 Marketing101 钱包：**`directional_win` 85.6% 但 `user_won` 只有 66.7%**，差值就是 hedge 成本吃掉的利润。只看"胜率"会严重高估这种打法的盈利能力。
+双边对冲钱包典型差异：**`directional_win` 可以比 `user_won` 高出 15-20 个百分点**，差值就是 hedge 成本吃掉的利润。只看"胜率"会严重高估这种打法的盈利能力。
 
 ## 命令行参数
 
@@ -82,7 +82,7 @@ wallet-xray 0x... > wallet.md
 wallet-xray [wallet] [options]
 
   wallet                钱包地址（不传则交互式提示）
-  --days N              只分析最近 N 天（默认 90；传 all 拉全量）
+  --days N              只分析最近 N 天（默认 21，~3 周，一般能得到 200-500 个解析窗口；传 all 拉全量）
   --symbols btc,eth     过滤币种（默认全部）
   --tfs 5m,15m,1h       过滤周期（默认全部）
   --out-dir DIR         JSON 输出目录（默认 ./reports/）

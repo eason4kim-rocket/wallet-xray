@@ -47,11 +47,17 @@ def _http_get(url: str, timeout: int = 30, retries: int = 2) -> Any:
 def fetch_activity(
     wallet: str,
     max_records: int | None = None,
+    min_ts: int | None = None,
     progress: bool = True,
 ) -> list[dict]:
     """Fetch all activity rows for a wallet, paginating until the API returns empty.
 
-    If max_records is None (default), fetches until exhaustion.
+    If ``max_records`` is None (default), fetches until exhaustion.
+    If ``min_ts`` is provided, stops paging once a page's oldest row is already
+    older than the cutoff — since data-api returns rows in descending timestamp
+    order, any further pages would all be out of range. The current page is
+    still included (it may contain some in-range rows that will be filtered at
+    window-build time).
     """
     wallet = wallet.lower().strip()
     rows: list[dict] = []
@@ -77,6 +83,18 @@ def fetch_activity(
         if max_records is not None and len(rows) >= max_records:
             rows = rows[:max_records]
             break
+        if min_ts is not None:
+            # page is timestamp-descending; if its oldest row is already older
+            # than the cutoff, no future page can contain in-range rows.
+            oldest_ts = page[-1].get("timestamp") if isinstance(page[-1], dict) else None
+            if isinstance(oldest_ts, (int, float)) and oldest_ts < min_ts:
+                if progress:
+                    print(
+                        f"  early-stop: page ends at ts={int(oldest_ts)} "
+                        f"(before cutoff {min_ts}); no further pages needed",
+                        file=sys.stderr,
+                    )
+                break
         offset += _PAGE_SIZE
     return rows
 

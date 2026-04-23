@@ -31,8 +31,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("wallet", nargs="?", help="Ethereum address (0x...)")
     p.add_argument(
         "--days",
-        default="90",
-        help='Only analyze windows from last N days (default 90; "all" for full history)',
+        default="21",
+        help=(
+            "Only analyze windows from last N days (default 21, ~3 weeks, "
+            "sweet spot for 200-500 resolved windows on typical wallets; "
+            "'all' for full history)"
+        ),
     )
     p.add_argument(
         "--symbols",
@@ -138,7 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     # ── fetch ────────────────────────────────────────────────────
     if progress:
         print("[1/3] Fetching activity ...", file=sys.stderr)
-    rows = fetch_activity(wallet, progress=progress)
+    # Pass min_ws so fetch can early-stop once a page goes out of range.
+    # A small buffer (2h) protects against unsettled windows that may still
+    # produce REDEEMs slightly after window_end.
+    fetch_min_ts = (min_ws - 7200) if min_ws is not None else None
+    rows = fetch_activity(wallet, min_ts=fetch_min_ts, progress=progress)
     if progress:
         print(f"  total activity rows: {len(rows)}", file=sys.stderr)
 
@@ -159,6 +167,21 @@ def main(argv: list[str] | None = None) -> int:
             f"gamma_calls={skipped.get('gamma_calls', 0)}",
             file=sys.stderr,
         )
+        # Actionable hint on window count
+        n = len(windows)
+        if n < 100:
+            print(
+                f"  💡 only {n} windows resolved — sample thin. Consider --days "
+                f"{max(int(args.days) * 3 if args.days.isdigit() else 90, 60)} "
+                "for a larger sample.",
+                file=sys.stderr,
+            )
+        elif n > 1000:
+            print(
+                f"  💡 {n} windows is a lot — strategy may have drifted. "
+                "Consider --days 7 to focus on the most recent behavior.",
+                file=sys.stderr,
+            )
 
     # ── cross-check via lb-api ──────────────────────────────────
     lb_profit = None
